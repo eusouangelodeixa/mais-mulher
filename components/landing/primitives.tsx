@@ -104,7 +104,7 @@ export function SectionHeading({
 /** Botão de conversão padrão. Aponta sempre para /cadastro. */
 export function CtaButton({
   children = "Começar agora",
-  href = "/cadastro",
+  href = "/comecar",
   size = "lg",
   variant,
   className,

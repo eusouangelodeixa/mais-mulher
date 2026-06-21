@@ -85,6 +85,14 @@ export const settingsSchema = z.object({
   periodLength: z.coerce.number().int().min(1).max(15),
 });
 
-export const paymentSchema = z.object({
-  method: z.enum(["MPESA", "EMOLA"]),
+// Captura de lead (fluxo pay-first): Nome + WhatsApp antes do checkout.
+export const leadSchema = z.object({
+  name: z.string().trim().min(2, "Informe seu nome"),
+  whatsapp,
+});
+
+// Ativação de acesso após o pagamento (define a senha da conta).
+export const activationSchema = z.object({
+  token: z.string().trim().min(1, "Token inválido"),
+  password: z.string().min(6, "A senha deve ter pelo menos 6 caracteres"),
 });

@@ -37,6 +37,7 @@ model User {
   otps         OtpCode[]
   payments     Payment[]
   reminderLogs ReminderLog[]
+  leads        Lead[]
 
   @@index([whatsapp])
 }
@@ -117,4 +118,70 @@ model ReminderLog {
 
   // Idempotência: um lembrete de cada tipo, por data de referência, por usuária.
   @@unique([userId, kind, forDate])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Fluxo "pay-first": a lead paga antes de criar conta.
+// Landing → /comecar (Nome + WhatsApp → Lead PENDING) → checkout Lojou →
+// webhook (order_approved) → acesso enviado pelo WhatsApp (link de ativação).
+// ─────────────────────────────────────────────────────────────────────────────
+
+enum LeadStatus {
+  PENDING // capturada, aguardando pagamento
+  PAID // pagamento aprovado; acesso enviado, aguardando ativação
+  ACTIVATED // conta criada/renovada a partir desta lead
+  CANCELLED // pedido cancelado na Lojou
+  REFUNDED // pedido reembolsado na Lojou
+}
+
+model Lead {
+  id       String     @id @default(cuid())
+  name     String
+  whatsapp String // E.164 normalizado — chave de matching com o webhook da Lojou
+  email    String?
+  status   LeadStatus @default(PENDING)
+
+  // Dados da venda (preenchidos pelo webhook da Lojou)
+  orderNumber   String?
+  transactionId String?
+  paymentMethod String? // "mpesa" | "emola"
+  amountMt      Int?
+  paidAt        DateTime?
+
+  // Ativação de acesso (link mágico enviado pelo WhatsApp)
+  activationToken  String?   @unique
+  activationSentAt DateTime?
+  activatedAt      DateTime?
+  userId           String?
+  user             User?     @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([whatsapp])
+  @@index([status])
+}
+
+// Log + idempotência dos webhooks recebidos da Lojou (também alimenta o painel admin).
+model WebhookEvent {
+  id            String    @id @default(cuid())
+  provider      String    @default("lojou")
+  // Chave de deduplicação NÃO-NULA (transaction_id, ou derivada do pedido/tipo/status
+  // quando não há transaction_id). NULL no Postgres é distinto, então não serve de unique.
+  dedupeKey     String    @unique
+  orderType     String? // order_approved | order_cancelled | order_refund
+  orderNumber   String?
+  transactionId String?
+  status        String? // approved | cancelled | refund
+  mobileNumber  String?
+  amountMt      Int?
+  matchedLeadId String?
+  note          String? // resultado do processamento (ex.: "acesso enviado", "sem lead correspondente")
+  payload       Json
+  receivedAt    DateTime  @default(now())
+  // Só é preenchido quando o evento foi processado com sucesso. Permite
+  // reprocessar (retry da Lojou) eventos cuja tentativa anterior falhou.
+  processedAt   DateTime?
+
+  @@index([receivedAt])
 }

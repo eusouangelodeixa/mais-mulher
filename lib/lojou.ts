@@ -1,138 +1,137 @@
-// Adaptador da Lojou (pagamentos M-Pesa / E-mola).
-// Doc: base https://api.lojou.app, prefixo /v1, Authorization: Bearer <API_KEY> (com escopo orders.write)
-// Fluxo: POST /v1/orders → usar `checkout_url` para redirecionar →
-//        confirmar com GET /v1/orders/{id} (status: approved|pending|cancelled|refunded).
+// Adaptador da Lojou — fluxo "pay-first" com checkout HOSPEDADO.
 //
-// Em modo mock (LOJOU_MOCK=true ou sem credenciais), o pedido é auto-aprovado
-// (sem checkout real), permitindo testar trial→pago→expirado sem credenciais.
+// A lead preenche Nome + WhatsApp em /comecar (vira um Lead PENDING) e é
+// redirecionada para o link de checkout hospedado da Lojou (LOJOU_CHECKOUT_URL,
+// ex.: https://pay.lojou.app/p/NvssZ). Após o pagamento, a Lojou chama o nosso
+// webhook (/api/webhooks/lojou) com um payload no formato abaixo.
+//
+// Como o link de checkout é fixo (igual para todas as leads), o vínculo
+// lead↔venda é feito pelo customer.mobile_number normalizado.
+//
+// A Lojou não assina o payload, então a autenticidade do webhook é garantida por
+// um token-segredo na URL (LOJOU_WEBHOOK_SECRET), exibido no painel /admin.
 
-export type LojouOrderStatus =
-  | "approved"
-  | "pending"
-  | "cancelled"
-  | "refunded"
-  | "unknown";
+import { createHash, timingSafeEqual } from "node:crypto";
 
-export interface InitiatePaymentArgs {
-  userId: string;
-  phone: string;
-  method: "MPESA" | "EMOLA";
-  amountMt: number;
-  /** referência interna (ex: id do Payment) para idempotência/rastreio. */
-  reference: string;
+export interface LojouCustomer {
+  name?: string;
+  email?: string;
+  mobile_number?: string;
 }
 
-export interface InitiatePaymentResult {
-  ok: boolean;
-  ref: string; // id do pedido na Lojou
-  status: "PENDING" | "CONFIRMED" | "FAILED";
-  checkoutUrl?: string;
+export interface LojouWebhookPayload {
+  order_type?: string; // order_approved | order_cancelled | order_refund
+  order_number?: string;
+  status?: string; // approved | cancelled | refund
+  transaction_id?: string;
+  currency?: string;
+  payment_method?: string; // mpesa | emola
+  amount?: number;
+  customer?: LojouCustomer;
+  product?: { name?: string; price?: number; pid?: string };
+  brand?: string;
+  [key: string]: unknown;
 }
 
-function isMock(): boolean {
-  return process.env.LOJOU_MOCK === "true" || !process.env.LOJOU_API_KEY;
+export type LojouOutcome = "APPROVED" | "CANCELLED" | "REFUNDED" | "UNKNOWN";
+
+export interface ParsedLojouWebhook {
+  orderType: string | null;
+  orderNumber: string | null;
+  transactionId: string | null;
+  status: string | null;
+  paymentMethod: string | null;
+  amount: number | null;
+  customerName: string | null;
+  customerEmail: string | null;
+  mobileNumber: string | null; // valor bruto do payload (ex.: "+258841234567")
+  outcome: LojouOutcome;
 }
 
-function baseUrl(): string {
-  return process.env.LOJOU_BASE_URL ?? "https://api.lojou.app";
+/** Link de checkout hospedado da Lojou (igual para todas as leads). */
+export function lojouCheckoutUrl(): string {
+  return process.env.LOJOU_CHECKOUT_URL ?? "https://pay.lojou.app/p/NvssZ";
 }
 
-function appUrl(): string {
-  return process.env.APP_BASE_URL ?? "http://localhost:3000";
+/** Verifica o token-segredo do webhook em tempo constante (fail-closed). */
+export function verifyWebhookSecret(provided: string | null): boolean {
+  const expected = process.env.LOJOU_WEBHOOK_SECRET;
+  if (!expected || !provided) return false;
+  const a = createHash("sha256").update(provided).digest();
+  const b = createHash("sha256").update(expected).digest();
+  return timingSafeEqual(a, b);
 }
 
-/** Mapeia o status da Lojou para o status interno do Payment. */
-export function mapStatus(s: LojouOrderStatus): "CONFIRMED" | "PENDING" | "FAILED" {
-  if (s === "approved") return "CONFIRMED";
-  if (s === "pending") return "PENDING";
-  return "FAILED"; // cancelled | refunded | unknown
-}
-
-/** Cria o pedido de pagamento. Em mock, já volta CONFIRMED. */
-export async function initiatePayment(
-  a: InitiatePaymentArgs,
-): Promise<InitiatePaymentResult> {
-  if (isMock()) {
-    const ref = `mock_pay_${a.reference}`;
-    console.log(
-      `[LOJOU MOCK] pedido ${a.method} ${a.amountMt} MT (${a.phone}) → ${ref} (auto-aprovado)`,
-    );
-    return { ok: true, ref, status: "CONFIRMED" };
-  }
-
-  try {
-    const res = await fetch(`${baseUrl()}/v1/orders`, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${process.env.LOJOU_API_KEY}`,
-        "Content-Type": "application/json",
-      },
-      // TODO: confirmar os nomes exatos dos campos no painel/OpenAPI da Lojou.
-      body: JSON.stringify({
-        product_id: process.env.LOJOU_PRODUCT_ID,
-        amount: a.amountMt,
-        currency: "MZN",
-        payment_method: a.method.toLowerCase(), // "mpesa" | "emola"
-        customer: { phone: a.phone.replace(/\D/g, "") },
-        metadata: { userId: a.userId, reference: a.reference },
-        success_url: `${appUrl()}/assinatura?retorno=sucesso`,
-        cancel_url: `${appUrl()}/assinatura?retorno=cancelado`,
-      }),
-    });
-
-    if (!res.ok) {
-      const text = await res.text().catch(() => "");
-      console.error(`[LOJOU] erro ${res.status}: ${text}`);
-      return { ok: false, ref: "", status: "FAILED" };
-    }
-
-    const json = (await res.json().catch(() => null)) as
-      | { data?: { id?: string; checkout_url?: string; status?: LojouOrderStatus } }
-      | null;
-    const data = json?.data ?? {};
-    return {
-      ok: true,
-      ref: data.id ?? "",
-      status: mapStatus(data.status ?? "pending"),
-      checkoutUrl: data.checkout_url,
-    };
-  } catch (err) {
-    console.error("[LOJOU] falha de rede:", err);
-    return { ok: false, ref: "", status: "FAILED" };
-  }
-}
-
-/** Consulta o status autoritativo de um pedido. Em mock, volta "approved". */
-export async function getOrderStatus(ref: string): Promise<LojouOrderStatus> {
-  if (isMock()) return "approved";
-
-  try {
-    const res = await fetch(`${baseUrl()}/v1/orders/${encodeURIComponent(ref)}`, {
-      headers: { Authorization: `Bearer ${process.env.LOJOU_API_KEY}` },
-    });
-    if (!res.ok) return "unknown";
-    const json = (await res.json().catch(() => null)) as
-      | { data?: { status?: LojouOrderStatus } }
-      | null;
-    return json?.data?.status ?? "unknown";
-  } catch (err) {
-    console.error("[LOJOU] falha ao consultar pedido:", err);
-    return "unknown";
-  }
+/** Valor mínimo (MT) para uma venda ser considerada válida (anti-forja). */
+export function minAcceptableAmount(): number {
+  const n = Number(process.env.LOJOU_MIN_AMOUNT_MT);
+  return Number.isFinite(n) && n > 0 ? n : 47;
 }
 
 /**
- * Extrai defensivamente o id do pedido de um payload de webhook.
- * O formato exato não está documentado, então procuramos os campos mais prováveis.
+ * O payload do webhook é entrada NÃO confiável. Só provisionamos acesso se o
+ * valor pago for plausível (>= mínimo configurado) — bloqueia eventos forjados
+ * com amount 0/ausente caso o segredo do webhook vaze.
  */
-export function parseWebhook(body: unknown): { ref: string } | null {
+export function isAcceptableAmount(amount: number | null): boolean {
+  return amount != null && Math.round(amount) >= minAcceptableAmount();
+}
+
+/**
+ * Chave de deduplicação NÃO-NULA do evento (idempotência). Usa o transaction_id
+ * quando presente; senão deriva do pedido/tipo/status (NULL não serve de unique
+ * no Postgres).
+ */
+export function eventDedupeKey(p: ParsedLojouWebhook): string {
+  if (p.transactionId) return `txn:${p.transactionId}`;
+  if (p.orderNumber)
+    return `ord:${p.orderNumber}:${p.orderType ?? ""}:${p.status ?? ""}`;
+  return `evt:${p.orderType ?? ""}:${p.status ?? ""}:${p.mobileNumber ?? ""}:${p.amount ?? ""}`;
+}
+
+function str(v: unknown): string | null {
+  return typeof v === "string" && v.trim() ? v.trim() : null;
+}
+
+function num(v: unknown): number | null {
+  if (typeof v === "number" && Number.isFinite(v)) return v;
+  const n = Number(v);
+  return Number.isFinite(n) && v !== null && v !== "" ? n : null;
+}
+
+function classify(orderType: string | null, status: string | null): LojouOutcome {
+  const t = (orderType ?? "").toLowerCase();
+  const s = (status ?? "").toLowerCase();
+  if (t.includes("approv") || s === "approved") return "APPROVED";
+  if (t.includes("refund") || s.startsWith("refund")) return "REFUNDED";
+  if (t.includes("cancel") || s.startsWith("cancel")) return "CANCELLED";
+  return "UNKNOWN";
+}
+
+/** Lê o payload do webhook de forma defensiva. Retorna null se irreconhecível. */
+export function parseLojouWebhook(body: unknown): ParsedLojouWebhook | null {
   if (!body || typeof body !== "object") return null;
-  const b = body as Record<string, unknown>;
-  const data = (b.data ?? b.order ?? b) as Record<string, unknown>;
-  const ref =
-    (data.id as string | undefined) ??
-    (data.order_id as string | undefined) ??
-    (b.id as string | undefined) ??
-    (b.order_id as string | undefined);
-  return ref ? { ref } : null;
+  const b = body as LojouWebhookPayload;
+  const customer = (b.customer ?? {}) as LojouCustomer;
+
+  const orderNumber = str(b.order_number);
+  const transactionId = str(b.transaction_id);
+  // Precisa de pelo menos um identificador de pedido.
+  if (!orderNumber && !transactionId) return null;
+
+  const orderType = str(b.order_type);
+  const status = str(b.status);
+
+  return {
+    orderType,
+    orderNumber,
+    transactionId,
+    status,
+    paymentMethod: str(b.payment_method),
+    amount: num(b.amount),
+    customerName: str(customer.name),
+    customerEmail: str(customer.email),
+    mobileNumber: str(customer.mobile_number),
+    outcome: classify(orderType, status),
+  };
 }

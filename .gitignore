@@ -32,3 +32,6 @@ yarn-error.log*
 
 # local postgres cluster (fallback quando o Docker não está disponível)
 /.pgdata
+
+# runtime dev log
+dev.log
