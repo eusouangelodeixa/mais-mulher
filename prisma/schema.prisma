@@ -1,0 +1,120 @@
+// +Mulher — schema Prisma (PostgreSQL)
+// Datas de ciclo/menstruação são @db.Date (sem hora) para manter o cálculo de dias limpo.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+model User {
+  id               String  @id @default(cuid())
+  name             String
+  whatsapp         String  @unique // E.164 normalizado, ex: +258840000000
+  passwordHash     String
+  whatsappVerified Boolean @default(false)
+
+  // Configuração inicial (onboarding)
+  onboardingDone   Boolean   @default(false)
+  lastPeriodStart  DateTime? @db.Date // âncora inicial para a previsão
+  baseCycleLength  Int? // duração típica do ciclo (dias), ex: 28
+  basePeriodLength Int? // duração típica da menstruação (dias), ex: 5
+
+  // Assinatura (denormalizada para gating rápido)
+  trialEndsAt DateTime? // definido no cadastro = agora + 7 dias
+  paidUntil   DateTime? // estendido a cada pagamento confirmado
+
+  consentAt DateTime? // consentimento para uso de dados de saúde
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  cycles       Cycle[]
+  otps         OtpCode[]
+  payments     Payment[]
+  reminderLogs ReminderLog[]
+
+  @@index([whatsapp])
+}
+
+model Cycle {
+  id        String    @id @default(cuid())
+  userId    String
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  startDate DateTime  @db.Date // "Iniciar Menstruação" = hoje
+  endDate   DateTime? @db.Date // "Encerrar Menstruação"; null enquanto em curso
+  createdAt DateTime  @default(now())
+
+  @@index([userId, startDate])
+}
+
+enum OtpPurpose {
+  SIGNUP
+  RECOVERY
+}
+
+model OtpCode {
+  id         String     @id @default(cuid())
+  userId     String
+  user       User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  codeHash   String // hash bcrypt do código de 4 dígitos
+  purpose    OtpPurpose
+  expiresAt  DateTime // agora + 10 min
+  consumedAt DateTime?
+  attempts   Int        @default(0) // trava após 5 tentativas
+  createdAt  DateTime   @default(now())
+
+  @@index([userId, purpose])
+}
+
+enum PaymentStatus {
+  PENDING
+  CONFIRMED
+  FAILED
+}
+
+enum PaymentMethod {
+  MPESA
+  EMOLA
+}
+
+model Payment {
+  id                String        @id @default(cuid())
+  userId            String
+  user              User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  amountMt          Int           @default(47)
+  method            PaymentMethod
+  status            PaymentStatus @default(PENDING)
+  lojouRef          String?       @unique // id do pedido na Lojou (idempotência do webhook)
+  checkoutUrl       String? // checkout_url retornado pela Lojou
+  paidUntilSnapshot DateTime? // valor de paidUntil concedido por este pagamento
+  createdAt         DateTime      @default(now())
+  confirmedAt       DateTime?
+
+  @@index([userId, status])
+}
+
+enum ReminderKind {
+  THREE_DAYS_BEFORE
+  ONE_DAY_BEFORE
+  PREDICTED_START
+  FERTILE_START
+  DELAY
+}
+
+model ReminderLog {
+  id      String       @id @default(cuid())
+  userId  String
+  user    User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  kind    ReminderKind
+  forDate DateTime     @db.Date // dia de referência do lembrete
+  sentAt  DateTime     @default(now())
+  success Boolean      @default(true)
+
+  // Idempotência: um lembrete de cada tipo, por data de referência, por usuária.
+  @@unique([userId, kind, forDate])
+}

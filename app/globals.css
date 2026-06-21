@@ -1,0 +1,187 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+
+/* ----------------------------------------------------------------------------
+ * Duas superfícies, dois temas:
+ *  - App interno (light, rosa) → usa os tokens brand-* / accent-*.
+ *  - Landing pública (dark premium) → escopada na classe `.landing`,
+ *    usando os tokens no estilo shadcn (--background, --primary, ...).
+ * -------------------------------------------------------------------------- */
+
+@theme {
+  /* App interno — paleta rosa existente */
+  --color-brand-50: #fdf2f8;
+  --color-brand-100: #fce7f3;
+  --color-brand-200: #fbcfe8;
+  --color-brand-300: #f9a8d4;
+  --color-brand-400: #f472b6;
+  --color-brand-500: #ec4899;
+  --color-brand-600: #db2777;
+  --color-brand-700: #be185d;
+
+  --color-accent-500: #8b5cf6;
+  --color-accent-600: #7c3aed;
+
+  --animate-accordion-down: accordion-down 0.22s ease-out;
+  --animate-accordion-up: accordion-up 0.22s ease-out;
+}
+
+@keyframes accordion-down {
+  from {
+    height: 0;
+  }
+  to {
+    height: var(--radix-accordion-content-height);
+  }
+}
+
+@keyframes accordion-up {
+  from {
+    height: var(--radix-accordion-content-height);
+  }
+  to {
+    height: 0;
+  }
+}
+
+/* Mapeamento dos tokens shadcn → utilitários do Tailwind (bg-background, etc.).
+   Os valores são `var(--…)` resolvidos no escopo `.landing`. */
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+
+  /* Tons de marca da landing (rosa/coral + violeta suave) */
+  --color-rose: var(--rose);
+  --color-rose-soft: var(--rose-soft);
+  --color-plum: var(--plum);
+  --color-violet-soft: var(--violet-soft);
+
+  /* Cores do WhatsApp (mockups realistas) */
+  --color-wa-bg: var(--wa-bg);
+  --color-wa-in: var(--wa-in);
+  --color-wa-out: var(--wa-out);
+  --color-wa-text: var(--wa-text);
+
+  --font-sans: var(--font-jakarta), ui-sans-serif, system-ui, sans-serif;
+  --font-display: var(--font-sora), var(--font-jakarta), ui-sans-serif, sans-serif;
+
+  --radius-sm: calc(var(--radius) - 0.4rem);
+  --radius-md: calc(var(--radius) - 0.2rem);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 0.4rem);
+  --radius-2xl: calc(var(--radius) + 0.8rem);
+}
+
+/* Paleta da landing (dark premium, quente e feminina) */
+.landing {
+  --background: #120a10;
+  --foreground: #fbf1f3;
+
+  --card: #1b1018;
+  --card-foreground: #fbf1f3;
+  --popover: #1b1018;
+  --popover-foreground: #fbf1f3;
+
+  --primary: #ff5d8a;
+  --primary-foreground: #2a0c16;
+
+  --secondary: #271824;
+  --secondary-foreground: #fbf1f3;
+
+  --muted: #241420;
+  --muted-foreground: #c4a7b2;
+
+  --accent: #2a1824;
+  --accent-foreground: #ffd7e2;
+
+  --border: #34202d;
+  --input: #34202d;
+  --ring: #ff5d8a;
+
+  --rose: #ff5d8a;
+  --rose-soft: #ff9bb6;
+  --plum: #d8b4e2;
+  --violet-soft: #b79bff;
+
+  /* WhatsApp dark */
+  --wa-bg: #0b141a;
+  --wa-in: #1f2c34;
+  --wa-out: #144d3c;
+  --wa-text: #e9edef;
+
+  --radius: 1.1rem;
+
+  background-color: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-jakarta), ui-sans-serif, system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+.landing ::selection {
+  background: color-mix(in oklab, var(--rose) 35%, transparent);
+  color: var(--foreground);
+}
+
+.font-display {
+  font-family: var(--font-sora), var(--font-jakarta), ui-sans-serif, sans-serif;
+  letter-spacing: -0.02em;
+}
+
+@layer base {
+  * {
+    border-color: var(--border, currentColor);
+  }
+  html {
+    scroll-behavior: smooth;
+  }
+}
+
+:root {
+  color-scheme: light;
+}
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  background-color: var(--color-brand-50);
+  color: #1f2937;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Padrão de fundo discreto do WhatsApp (chat) */
+.wa-chat {
+  background-color: var(--wa-bg);
+  background-image: radial-gradient(
+    rgba(255, 255, 255, 0.025) 1px,
+    transparent 1px
+  );
+  background-size: 18px 18px;
+}
+
+/* Brilho suave de fundo para seções de destaque */
+.glow-rose {
+  background: radial-gradient(
+    60% 60% at 50% 0%,
+    color-mix(in oklab, var(--rose) 22%, transparent) 0%,
+    transparent 70%
+  );
+}
