@@ -48,9 +48,17 @@ export interface ParsedLojouWebhook {
   outcome: LojouOutcome;
 }
 
-/** Link de checkout hospedado da Lojou (igual para todas as leads). */
+const DEFAULT_CHECKOUT_URL = "https://pay.lojou.app/p/NvssZ";
+
+/**
+ * Link de checkout hospedado da Lojou (igual para todas as leads).
+ * Só usa LOJOU_CHECKOUT_URL se for uma URL http(s) absoluta — assim uma env
+ * vazia/ausente/relativa (comum num deploy mal configurado) nunca faz o
+ * redirect cair de volta na própria página.
+ */
 export function lojouCheckoutUrl(): string {
-  return process.env.LOJOU_CHECKOUT_URL ?? "https://pay.lojou.app/p/NvssZ";
+  const u = process.env.LOJOU_CHECKOUT_URL?.trim();
+  return u && /^https?:\/\//i.test(u) ? u : DEFAULT_CHECKOUT_URL;
 }
 
 /** Verifica o token-segredo do webhook em tempo constante (fail-closed). */

@@ -16,10 +16,18 @@ export async function startCheckout(
   });
   if (!parsed.success) return { error: zodError(parsed.error) };
 
-  await captureLead({
-    name: parsed.data.name,
-    whatsapp: parsed.data.whatsapp,
-  });
+  // Não bloqueia a ida ao checkout se o registro da lead falhar (ex.: banco
+  // indisponível em produção) — a venda ainda é recuperada pelo webhook.
+  // IMPORTANTE: o redirect() fica FORA do try (ele lança NEXT_REDIRECT, que um
+  // catch engoliria).
+  try {
+    await captureLead({
+      name: parsed.data.name,
+      whatsapp: parsed.data.whatsapp,
+    });
+  } catch (err) {
+    console.error("[comecar] falha ao registrar lead (segue para checkout):", err);
+  }
 
   // Segue para o checkout hospedado da Lojou (M-Pesa / E-mola).
   redirect(lojouCheckoutUrl());
